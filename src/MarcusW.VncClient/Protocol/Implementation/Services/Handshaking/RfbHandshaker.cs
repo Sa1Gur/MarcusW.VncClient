@@ -8,7 +8,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using MarcusW.VncClient.Protocol.SecurityTypes;
 using MarcusW.VncClient.Protocol.Services;
-using MarcusW.VncClient.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace MarcusW.VncClient.Protocol.Implementation.Services.Handshaking
@@ -39,6 +38,8 @@ namespace MarcusW.VncClient.Protocol.Implementation.Services.Handshaking
             _logger.LogDebug("Doing protocol handshake...");
 
             ITransport currentTransport = _context.Transport ?? throw new InvalidOperationException("Cannot do handshake before a transport has been created.");
+
+            await NegotiateIdAsync(currentTransport, cancellationToken).ConfigureAwait(false);
 
             // Negotiate the protocol version that both sides will use
             RfbProtocolVersion protocolVersion = await NegotiateProtocolVersionAsync(currentTransport, cancellationToken).ConfigureAwait(false);
@@ -81,6 +82,12 @@ namespace MarcusW.VncClient.Protocol.Implementation.Services.Handshaking
             return authenticationResult.TunnelTransport;
         }
 
+        private async Task NegotiateIdAsync(ITransport transport,
+            CancellationToken cancellationToken = default)
+        {
+            await SendViewerIdAsync(transport, 12345555, cancellationToken).ConfigureAwait(false);
+        }
+
         private async Task<RfbProtocolVersion> NegotiateProtocolVersionAsync(ITransport transport, CancellationToken cancellationToken = default)
         {
             // Read maximum supported server protocol version
@@ -106,6 +113,8 @@ namespace MarcusW.VncClient.Protocol.Implementation.Services.Handshaking
                 _logger.LogDebug("Server supports protocol version {serverProtocolVersion}. Choosing that as the highest one that's supported by both sides.",
                     serverProtocolVersion.ToReadableString());
             }
+
+
 
             // Send selected protocol version
             await SendProtocolVersionAsync(transport, clientProtocolVersion, cancellationToken).ConfigureAwait(false);
@@ -159,6 +168,9 @@ namespace MarcusW.VncClient.Protocol.Implementation.Services.Handshaking
 
             // Select the one with the hightest priority (hopefully the best one!)
             usedSecurityType = usableSecurityTypes.OrderByDescending(st => st.Priority).FirstOrDefault();
+
+            usedSecurityType = _context.SupportedSecurityTypes.First();//todo remove later
+
             if (usedSecurityType == null)
                 throw new HandshakeFailedException("Could not negotiate any common security types between the server and the client.");
 
@@ -182,6 +194,16 @@ namespace MarcusW.VncClient.Protocol.Implementation.Services.Handshaking
                 _logger.LogWarning("Unknown protocol version {protocolVersionString}.", protocolVersionString);
 
             return protocolVersion;
+        }
+
+        private async Task SendViewerIdAsync(ITransport transport, int viewerId, CancellationToken cancellationToken = default)
+        {
+            _logger.LogDebug("Sending protocol version {viewerId}...", viewerId);
+
+            string protocolVersionString = $"ID:{viewerId}\0";
+            byte[] bytes = Encoding.ASCII.GetBytes(protocolVersionString);
+
+            await transport.Stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task SendProtocolVersionAsync(ITransport transport, RfbProtocolVersion protocolVersion, CancellationToken cancellationToken = default)
